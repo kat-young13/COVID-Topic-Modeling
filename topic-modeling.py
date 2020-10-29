@@ -6,6 +6,7 @@ from pyspark.sql.functions import concat_ws, col, explode, flatten, collect_list
 from nltk.corpus import stopwords
 import re as re
 from pyspark.ml.feature import CountVectorizer , IDF
+from pyspark.ml.clustering import LDA
 
 conf = SparkConf().setMaster("local").setAppName("TopicModeling")
 sc = SparkContext(conf = conf)
@@ -51,3 +52,9 @@ result_cv = cvmodel.transform(df_txts)
 idf = IDF(inputCol="raw_features", outputCol="features")
 idfModel = idf.fit(result_cv)
 result_tfidf = idfModel.transform(result_cv)
+print(result_tfidf.show())
+num_topics = 10
+max_iterations = 100
+lda = LDA(k=10, maxIter=100)
+result_tfidf = result_tfidf.select("paper_id", "features")
+model = lda.fit(result_tfidf)
