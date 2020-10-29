@@ -33,31 +33,48 @@ def normalizeWords(text):
     return (test, text[1])
 
 spark = SparkSession.builder.appName("TopicModeling").getOrCreate()
-new_df = sqlContext.read.json("document_parses/test/000a0fc8bbef80410199e690191dc3076a290117.json", multiLine=True)
-print(new_df.printSchema())
+# read in json files
+new_df = sqlContext.read.json("document_parses/test/*", multiLine=True)
 print(new_df.show())
+
+# parse the paper id and the text we want
 test = new_df.selectExpr("paper_id", "abstract.text as abs", "body_text.text as body", "metadata.title").cache()
-print(test.printSchema())
 print(test.show())
+
+# combine all the text columns into one new column
 temp = test.withColumn("full_text", concat_ws(' ',test.abs,test.body,test.title)).cache()
 print(temp.show())
+
+# convert dataframe to rdd for preprocessing text data
 text = temp.rdd.map(lambda x : (x['full_text'], x['paper_id'])).filter(lambda x: x is not None)
+
+# tokenize and clean the data
 token = text.map(normalizeWords)
 print(token.collect())
+
+# convert rdd back to dataframe
 df_txts = sqlContext.createDataFrame(token, ["full_text", 'paper_id'])
 print(df_txts.show())
+
+# create the document frequencies in the form of a count vectorizer
 cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=1.0)
 cvmodel = cv.fit(df_txts)
 result_cv = cvmodel.transform(df_txts)
+
+# create the tfidf vectorization using the df computed above
 idf = IDF(inputCol="raw_features", outputCol="features")
 idfModel = idf.fit(result_cv)
 result_tfidf = idfModel.transform(result_cv)
 print(result_tfidf.show())
+
+# create and train our clustering model
 num_topics = 10
 max_iterations = 100
 lda = LDA(k=10, maxIter=100)
 result_tfidf = result_tfidf.select("paper_id", "features")
 model = lda.fit(result_tfidf)
+
+# get the topics and transform our data
 wordNumbers = 5
 topics = model.describeTopics(3)
 print("The topics described by their top-weighted terms:")
