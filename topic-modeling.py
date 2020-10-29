@@ -58,3 +58,9 @@ max_iterations = 100
 lda = LDA(k=10, maxIter=100)
 result_tfidf = result_tfidf.select("paper_id", "features")
 model = lda.fit(result_tfidf)
+wordNumbers = 5
+topics = model.describeTopics(3)
+print("The topics described by their top-weighted terms:")
+topics.show(truncate=False)
+transformed = model.transform(result_tfidf)
+transformed.show(truncate=False)
