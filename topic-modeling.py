@@ -52,9 +52,11 @@ temp = test.withColumn("full_text", concat_ws(' ', test.abs, test.body, test.tit
 temp2 = test2.withColumn("full_text", concat_ws(' ',test2.body, test2.title))
 
 # union the two different datasets
-temp2 = temp2.withColumn('abs', lit(None).cast(temp.dtypes[1][1]))
-temp2 = temp2.select("paper_id", "abs", "body", "title", "full_text")
-temp = temp.union(temp2)
+# temp2 = temp2.withColumn('abs', lit(None).cast(temp.dtypes[1][1]))
+# temp2 = temp2.select("paper_id", "abs", "body", "title", "full_text")
+temp = temp.select("paper_id", "full_text")
+temp2 = temp2.select("paper_id", "full_text")
+temp = temp.union(temp2).cache()
 print(temp.show())
 
 # convert dataframe to rdd for preprocessing text data
