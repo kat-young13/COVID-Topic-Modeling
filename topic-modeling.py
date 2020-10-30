@@ -5,11 +5,11 @@ from pyspark.mllib.clustering import LDA, LDAModel
 from pyspark.sql.functions import concat_ws, col, explode, flatten, collect_list
 from nltk.corpus import stopwords
 import re as re
-from pyspark.ml.feature import CountVectorizer , IDF
+from pyspark.ml.feature import CountVectorizer, IDF
 from pyspark.ml.clustering import LDA
 
 conf = SparkConf().setMaster("local").setAppName("TopicModeling")
-sc = SparkContext(conf = conf)
+sc = SparkContext(conf=conf)
 sqlContext = SQLContext(sc)
 
 
@@ -32,7 +32,9 @@ def normalizeWords(text):
     test = [word for word in test if not word in stop_words]
     return (test, text[1])
 
+
 spark = SparkSession.builder.appName("TopicModeling").getOrCreate()
+
 # read in json files
 new_df = sqlContext.read.json("document_parses/test/*", multiLine=True)
 print(new_df.show())
@@ -42,11 +44,11 @@ test = new_df.selectExpr("paper_id", "abstract.text as abs", "body_text.text as 
 print(test.show())
 
 # combine all the text columns into one new column
-temp = test.withColumn("full_text", concat_ws(' ',test.abs,test.body,test.title)).cache()
+temp = test.withColumn("full_text", concat_ws(' ', test.abs, test.body, test.title)).cache()
 print(temp.show())
 
 # convert dataframe to rdd for preprocessing text data
-text = temp.rdd.map(lambda x : (x['full_text'], x['paper_id'])).filter(lambda x: x is not None)
+text = temp.rdd.map(lambda x: (x['full_text'], x['paper_id'])).filter(lambda x: x is not None)
 
 # tokenize and clean the data
 token = text.map(normalizeWords)
@@ -76,8 +78,13 @@ model = lda.fit(result_tfidf)
 
 # get the topics and transform our data
 wordNumbers = 5
-topics = model.describeTopics(3)
+topics = model.describeTopics(wordNumbers)
 print("The topics described by their top-weighted terms:")
 topics.show(truncate=False)
 transformed = model.transform(result_tfidf)
-transformed.show(truncate=False)
+transformed.show()
+# this holds all the words
+vocabArray = cvmodel.vocabulary
+
+print(vocabArray)
+
