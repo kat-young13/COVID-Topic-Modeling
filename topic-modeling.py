@@ -8,6 +8,7 @@ import re as re
 from pyspark.ml.feature import CountVectorizer, IDF
 from pyspark.ml.clustering import LDA
 from pyspark.sql.types import StringType, ArrayType
+import time
 
 conf = SparkConf().setMaster("local").setAppName("TopicModeling")
 sc = SparkContext(conf=conf)
@@ -34,17 +35,28 @@ def normalizeWords(text):
     return (test, text[1])
 
 
-
-spark = SparkSession.builder.appName("TopicModeling").getOrCreate()
+start_time = time.time()
+spark = SparkSession.builder.appName("TopicModeling").config("spark.driver.memory", "15g").getOrCreate()
 
 # read in json files
-new_df = sqlContext.read.json("document_parses/test/000a0fc8bbef80410199e690191dc3076a290117.json", multiLine=True)
+
+# read in a sample file to infer schema
+new_df = sqlContext.read.json("document_parses/pdf_json/0001418189999fea7f7cbe3e82703d71c85a6fe5.json", multiLine=True)
 print(new_df.show())
+schema = new_df.schema
+# read in whole thing with correct schema (saves a ton of time)
+new_df = sqlContext.read.schema(schema).json("document_parses/pdf_json/*", multiLine=True)
+print("time to read first set of json set")
+print("--- %s seconds ---" % (time.time() - start_time))
 
 # parse the paper id and the text we want
 test = new_df.selectExpr("paper_id", "abstract.text as abs", "body_text.text as body", "metadata.title")
 
-new_df1 = sqlContext.read.json("document_parses/pmc_json/PMC1054884.xml.json", multiLine=True)
+new_df1 = sqlContext.read.json("document_parses/pmc_json/PMC35282.xml.json", multiLine=True)
+schema1 = new_df1.schema
+new_dfs1 = sqlContext.read.schema(schema1).json("document_parses/pmc_json/*")
+print("time to read second set of json set")
+print("--- %s seconds ---" % (time.time() - start_time))
 test2 = new_df1.selectExpr("paper_id", "body_text.text as body", "metadata.title")
 
 # combine all the text columns into one new column
@@ -56,22 +68,22 @@ temp2 = test2.withColumn("full_text", concat_ws(' ',test2.body, test2.title))
 # temp2 = temp2.select("paper_id", "abs", "body", "title", "full_text")
 temp = temp.select("paper_id", "full_text")
 temp2 = temp2.select("paper_id", "full_text")
-temp = temp.union(temp2).cache()
+temp = temp.union(temp2)
 print(temp.show())
 
 # convert dataframe to rdd for preprocessing text data
-text = temp.rdd.map(lambda x: (x['full_text'], x['paper_id'])).filter(lambda x: x is not None)
+temp = temp.rdd.map(lambda x: (x['full_text'], x['paper_id'])).filter(lambda x: x is not None)
 
 # tokenize and clean the data
-token = text.map(normalizeWords)
-print(token.collect())
+temp = temp.map(normalizeWords)
+print(temp.collect())
 
 # convert rdd back to dataframe
-df_txts = sqlContext.createDataFrame(token, ["full_text", 'paper_id'])
+df_txts = sqlContext.createDataFrame(temp, ["full_text", 'paper_id'])
 print(df_txts.show())
 
 # create the document frequencies in the form of a count vectorizer
-cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=1.0)
+cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=2.0)
 cvmodel = cv.fit(df_txts)
 result_cv = cvmodel.transform(df_txts)
 
@@ -99,3 +111,4 @@ transformed.show()
 vocabArray = cvmodel.vocabulary
 
 print(vocabArray)
+print("--- %s seconds ---" % (time.time() - start_time))
