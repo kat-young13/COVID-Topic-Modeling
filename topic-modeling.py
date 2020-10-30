@@ -2,11 +2,12 @@ from pyspark.sql import SQLContext, SparkSession
 from pyspark import SparkConf, SparkContext
 from pyspark.mllib.linalg import Vector, Vectors
 from pyspark.mllib.clustering import LDA, LDAModel
-from pyspark.sql.functions import concat_ws, col, explode, flatten, collect_list
+from pyspark.sql.functions import concat_ws, col, explode, flatten, collect_list, lit
 from nltk.corpus import stopwords
 import re as re
 from pyspark.ml.feature import CountVectorizer, IDF
 from pyspark.ml.clustering import LDA
+from pyspark.sql.types import StringType, ArrayType
 
 conf = SparkConf().setMaster("local").setAppName("TopicModeling")
 sc = SparkContext(conf=conf)
@@ -33,18 +34,27 @@ def normalizeWords(text):
     return (test, text[1])
 
 
+
 spark = SparkSession.builder.appName("TopicModeling").getOrCreate()
 
 # read in json files
-new_df = sqlContext.read.json("document_parses/test/*", multiLine=True)
+new_df = sqlContext.read.json("document_parses/test/000a0fc8bbef80410199e690191dc3076a290117.json", multiLine=True)
 print(new_df.show())
 
 # parse the paper id and the text we want
-test = new_df.selectExpr("paper_id", "abstract.text as abs", "body_text.text as body", "metadata.title").cache()
-print(test.show())
+test = new_df.selectExpr("paper_id", "abstract.text as abs", "body_text.text as body", "metadata.title")
+
+new_df1 = sqlContext.read.json("document_parses/pmc_json/PMC1054884.xml.json", multiLine=True)
+test2 = new_df1.selectExpr("paper_id", "body_text.text as body", "metadata.title")
 
 # combine all the text columns into one new column
-temp = test.withColumn("full_text", concat_ws(' ', test.abs, test.body, test.title)).cache()
+temp = test.withColumn("full_text", concat_ws(' ', test.abs, test.body, test.title))
+temp2 = test2.withColumn("full_text", concat_ws(' ',test2.body, test2.title))
+
+# union the two different datasets
+temp2 = temp2.withColumn('abs', lit(None).cast(temp.dtypes[1][1]))
+temp2 = temp2.select("paper_id", "abs", "body", "title", "full_text")
+temp = temp.union(temp2)
 print(temp.show())
 
 # convert dataframe to rdd for preprocessing text data
@@ -87,4 +97,3 @@ transformed.show()
 vocabArray = cvmodel.vocabulary
 
 print(vocabArray)
-
