@@ -9,6 +9,7 @@ import time
 import numpy as np
 import json
 from pyspark.ml.linalg import SparseVector, DenseVector
+from pyspark.sql.functions import col
 
 
 def normalizeWords(text):
@@ -161,6 +162,15 @@ if __name__ == "__main__":
     result_tfidf = result_tfidf.select("paper_id", "features")
     model = lda.fit(result_tfidf)
 
+
+    # calculate perplexity for use in tuning number of topics
+    likelihood = model.logLikelihood(result_tfidf)
+    perplexity = model.logPerplexity(result_tfidf)
+    #print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
+    #print("The upper bound on perplexity: " + str(perplexity))
+    topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
+
+
     # transform our data and get corresponding topic
     transformed = model.transform(result_tfidf)
     trans_rdd = transformed.rdd.map(lambda x : ((x['paper_id'], x['features']), x['topicDistribution']))
@@ -193,5 +203,19 @@ if __name__ == "__main__":
 
     # export all info for pyLDAvis
     export_for_pyLDAvis("topic-info.json", model, transformed, df_txts, vocabArray, frequencies)
+
+    #################################
+    ### Export Useful Information ###
+    #################################
+    paper_topics = docs_with_topics.select("paper_id", "topic")
+    topic_info = final_df.withColumn("termIndices", final_df["termIndices"].cast("string"))\
+        .withColumn("termWeights", final_df["termWeights"].cast("string"))\
+        .withColumn("termWords", final_df["termWords"].cast("string"))
+
+    # output topics assigned to each paper, and x most common words in topic
+    paper_topics.coalesce(1).write.options(header='true').csv('out/paper_topics')
+    topic_info.coalesce(1).write.options(header='true').csv('out/topic_info')
+    topic_tuning_results.coalesce(1).write.options(header='true').csv('out/perplexity_likelihood')
+
 
     print("--- %s seconds ---" % (time.time() - start_time))
