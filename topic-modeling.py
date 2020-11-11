@@ -155,20 +155,31 @@ if __name__ == "__main__":
     ### LDA CLUSTERING ###
     ######################
 
-    # create and train our clustering model
-    num_topics = 3 # tune number of topics
-    max_iterations = 100
-    lda = LDA(k=num_topics, maxIter=max_iterations)
-    result_tfidf = result_tfidf.select("paper_id", "features")
-    model = lda.fit(result_tfidf)
+    # manual grid search for best num topics for our model
+    grid_num_topics = [3,4,5]
+    like_perp = []
+
+    for i in grid_num_topics:
+
+        num_topics = i # tune number of topics
+        max_iterations = 100
+        lda = LDA(k=num_topics, maxIter=max_iterations)
+        result_tfidf = result_tfidf.select("paper_id", "features")
+        model = lda.fit(result_tfidf)
 
 
-    # calculate perplexity for use in tuning number of topics
-    likelihood = model.logLikelihood(result_tfidf)
-    perplexity = model.logPerplexity(result_tfidf)
-    #print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
-    #print("The upper bound on perplexity: " + str(perplexity))
-    topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
+        # calculate perplexity for use in tuning number of topics
+        likelihood = model.logLikelihood(result_tfidf)
+        perplexity = model.logPerplexity(result_tfidf)
+
+        like_perp.append((likelihood, perplexity))
+        #print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
+        #print("The upper bound on perplexity: " + str(perplexity))
+
+    lp_cols = ["dept_name","dept_id"]
+    lp_df = spark.createDataFrame(data=like_perp, schema = lp_cols)
+    lp_df.show()
+    #topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
 
 
     # transform our data and get corresponding topic
@@ -215,7 +226,7 @@ if __name__ == "__main__":
     # output topics assigned to each paper, and x most common words in topic
     paper_topics.coalesce(1).write.options(header='true').csv('out/paper_topics')
     topic_info.coalesce(1).write.options(header='true').csv('out/topic_info')
-    topic_tuning_results.coalesce(1).write.options(header='true').csv('out/perplexity_likelihood')
+    lp_df.coalesce(1).write.options(header='true').csv('out/perplexity_likelihood')
 
 
     print("--- %s seconds ---" % (time.time() - start_time))
