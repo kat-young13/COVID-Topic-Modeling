@@ -27,8 +27,9 @@ def normalizeWords(text):
                   'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more',
                   'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
                   'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now', 'html']
-    test = [stemmer.stem(word) for word in test if not word in stop_words and word.isalpha() and len(word)>2]
+    test = [stemmer.stem(word) for word in test if not word in stop_words and word.isalpha() and len(word) > 2]
     return (test, text[1], len(test))
+
 
 def getTopic(line):
     ''' Used with transformed data from LDA in order to assign topic '''
@@ -37,6 +38,7 @@ def getTopic(line):
         if line[i] == maximum:
             return line, i
 
+
 def getWords(line):
     ''' Used when obtaining top x words for a topic '''
     words = []
@@ -44,32 +46,34 @@ def getWords(line):
         words.append(vocabArray[i])
     return line[0], line[1], words
 
-def addVectors(x,y):
+
+def addVectors(x, y):
     ''' Used for calculating word frequency over all documents '''
     added = []
     for i in range(0, len(x)):
         added.append(x[i] + y[i])
     return added
 
+
 def export_for_pyLDAvis(filename, model, transformed, df_txts, vocab, term_frequency):
     ''' Export for visualization purposes -- pyLDAvis '''
-    #topic_term_dists
+    # topic_term_dists
     topic_term_dists = np.array(model.topicsMatrix().toArray()).T
-    #doc_topic_dists
-    doc_topic_dists = np.array([x.toArray() for x in transformed.select(["topicDistribution"]).toPandas()['topicDistribution']])
-    #doc_lengths
+    # doc_topic_dists
+    doc_topic_dists = np.array(
+        [x.toArray() for x in transformed.select(["topicDistribution"]).toPandas()['topicDistribution']])
+    # doc_lengths
     doc_lengths = [r[0] for r in df_txts.select("length").collect()]
 
     pyLDA = {}
-    pyLDA.update({"topic_term_dists":topic_term_dists.tolist()})
-    pyLDA.update({"doc_topic_dists":doc_topic_dists.tolist()})
-    pyLDA.update({"doc_lengths":doc_lengths})
-    pyLDA.update({"vocab":vocab})
-    pyLDA.update({"term_frequency":term_frequency})
+    pyLDA.update({"topic_term_dists": topic_term_dists.tolist()})
+    pyLDA.update({"doc_topic_dists": doc_topic_dists.tolist()})
+    pyLDA.update({"doc_lengths": doc_lengths})
+    pyLDA.update({"vocab": vocab})
+    pyLDA.update({"term_frequency": term_frequency})
 
     with open(filename, 'w') as outfile:
         json.dump(pyLDA, outfile, indent=4)
-
 
 
 if __name__ == "__main__":
@@ -87,7 +91,8 @@ if __name__ == "__main__":
     ##############################
 
     # read in a sample file to infer schema
-    new_df = sqlContext.read.json("document_parses/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json", multiLine=True)
+    new_df = sqlContext.read.json("document_parses/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json",
+                                  multiLine=True)
     schema = new_df.schema
 
     # read in whole JSON set with correct schema (saves a ton of time)
@@ -118,7 +123,7 @@ if __name__ == "__main__":
 
     # combine all the text columns into one new column
     temp = test.withColumn("full_text", concat_ws(' ', test.abs, test.body, test.title))
-    temp2 = test2.withColumn("full_text", concat_ws(' ',test2.body, test2.title))
+    temp2 = test2.withColumn("full_text", concat_ws(' ', test2.body, test2.title))
 
     # union the two different datasets
     temp = temp.select("paper_id", "full_text")
@@ -139,13 +144,11 @@ if __name__ == "__main__":
     ### COUNT VECTORIZATION ###
     ############################
 
-
     # create the document frequencies in the form of a count vectorizer
-    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=2.0)
+    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=2.0, vocabSize=10000)
     cvmodel = cv.fit(df_txts)
     result_cv = cvmodel.transform(df_txts)
-
-
+    cvmodel.save("count")
     ############################
     ### TF-IDF VECTORIZATION ###
     ############################
@@ -153,6 +156,7 @@ if __name__ == "__main__":
     # create the tfidf vectorization using the df computed above
     idf = IDF(inputCol="raw_features", outputCol="features")
     idfModel = idf.fit(result_cv)
+    idfModel.save("tfidf")
     result_tfidf = idfModel.transform(result_cv)
     result_tfidf.show()
 
@@ -161,35 +165,32 @@ if __name__ == "__main__":
     ######################
 
     # manual grid search for best num topics for our model
-    grid_num_topics = [11,13, 15]
+    grid_num_topics = [11, 13, 15]
     like_perp = []
     model = None
     for i in grid_num_topics:
-
-        num_topics = i # tune number of topics
+        num_topics = i  # tune number of topics
         max_iterations = 100
         lda = LDA(k=num_topics, maxIter=max_iterations)
         result_tfidf = result_tfidf.select("paper_id", "features")
         model = lda.fit(result_tfidf)
-
 
         # calculate perplexity for use in tuning number of topics
         likelihood = model.logLikelihood(result_tfidf)
         perplexity = model.logPerplexity(result_tfidf)
 
         like_perp.append((likelihood, perplexity))
-        #print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
-        #print("The upper bound on perplexity: " + str(perplexity))
+        # print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
+        # print("The upper bound on perplexity: " + str(perplexity))
 
-    lp_cols = ["dept_name","dept_id"]
-    lp_df = spark.createDataFrame(data=like_perp, schema = lp_cols)
+    lp_cols = ["dept_name", "dept_id"]
+    lp_df = spark.createDataFrame(data=like_perp, schema=lp_cols)
     lp_df.show()
-    #topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
-
+    # topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
 
     # transform our data and get corresponding topic
     transformed = model.transform(result_tfidf)
-    trans_rdd = transformed.rdd.map(lambda x : ((x['paper_id'], x['features']), x['topicDistribution']))
+    trans_rdd = transformed.rdd.map(lambda x: ((x['paper_id'], x['features']), x['topicDistribution']))
     trans_rdd = trans_rdd.mapValues(getTopic)
 
     trans_rdd = trans_rdd.map(lambda x: (x[0][0], x[0][1], x[1][0], x[1][1]))
@@ -200,20 +201,20 @@ if __name__ == "__main__":
     wordNumbers = 5
     topicIndices = model.describeTopics(wordNumbers)
 
-    vocabArray = cvmodel.vocabulary # get vocabulary
-    topicInd = topicIndices.rdd.map(lambda x : (x['topic'], (x['termIndices'], x['termWeights'])))
+    vocabArray = cvmodel.vocabulary  # get vocabulary
+    topicInd = topicIndices.rdd.map(lambda x: (x['topic'], (x['termIndices'], x['termWeights'])))
     topicInd = topicInd.mapValues(getWords)
     topicInd = topicInd.map(lambda x: (x[0], x[1][0], x[1][1], x[1][2]))
     final_df = sqlContext.createDataFrame(topicInd, ["topic", "termIndices", "termWeights", "termWords"])
-    final_df.show() # info about each topic
+    final_df.show()  # info about each topic
 
     ################################
     ### Export for Visualization ###
     ################################
 
     # get each word's total frequency across documents
-    rf_rdd = result_cv.rdd.map(lambda x : (x['raw_features']))\
-        .map(lambda x: (1, DenseVector(x)))\
+    rf_rdd = result_cv.rdd.map(lambda x: (x['raw_features'])) \
+        .map(lambda x: (1, DenseVector(x))) \
         .reduceByKey(addVectors)
     frequencies = rf_rdd.collect()[0][1]
 
@@ -224,14 +225,13 @@ if __name__ == "__main__":
     ### Export Useful Information ###
     #################################
     paper_topics = docs_with_topics.select("paper_id", "topic")
-    topic_info = final_df.withColumn("termIndices", final_df["termIndices"].cast("string"))\
-        .withColumn("termWeights", final_df["termWeights"].cast("string"))\
+    topic_info = final_df.withColumn("termIndices", final_df["termIndices"].cast("string")) \
+        .withColumn("termWeights", final_df["termWeights"].cast("string")) \
         .withColumn("termWords", final_df["termWords"].cast("string"))
 
     # output topics assigned to each paper, and x most common words in topic
     paper_topics.coalesce(1).write.options(header='true').csv('out/paper_topics')
     topic_info.coalesce(1).write.options(header='true').csv('out/topic_info')
     lp_df.coalesce(1).write.options(header='true').csv('out/perplexity_likelihood')
-
 
     print("--- %s seconds ---" % (time.time() - start_time))
