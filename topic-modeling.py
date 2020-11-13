@@ -91,12 +91,12 @@ if __name__ == "__main__":
     ##############################
 
     # read in a sample file to infer schema
-    new_df = sqlContext.read.json("document_parses/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json",
+    new_df = sqlContext.read.json("test/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json",
                                   multiLine=True)
     schema = new_df.schema
 
     # read in whole JSON set with correct schema (saves a ton of time)
-    new_df = sqlContext.read.schema(schema).json("document_parses/pdf_json/*", multiLine=True)
+    new_df = sqlContext.read.schema(schema).json("test/pdf_json/*", multiLine=True)
     print("time to read first set of json set")
     print("--- %s seconds ---" % (time.time() - start_time))
 
@@ -108,11 +108,11 @@ if __name__ == "__main__":
     ##############################
 
     # read in sample file to infer schema
-    new_df1 = sqlContext.read.json("document_parses/pmc_json/PMC59549.xml.json", multiLine=True)
+    new_df1 = sqlContext.read.json("test/pmc_json/PMC59549.xml.json", multiLine=True)
     schema1 = new_df1.schema
 
     # read in whole PMC set with correct scheme
-    new_dfs1 = sqlContext.read.schema(schema1).json("document_parses/pmc_json/*", multiLine=True)
+    new_dfs1 = sqlContext.read.schema(schema1).json("test/pmc_json/*", multiLine=True)
     print("time to read second set of json set")
     print("--- %s seconds ---" % (time.time() - start_time))
     test2 = new_dfs1.selectExpr("paper_id", "body_text.text as body", "metadata.title")
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     temp = temp.map(normalizeWords)
 
     # convert rdd back to dataframe with full_text, paper_id, and length
-    df_txts = sqlContext.createDataFrame(temp, ["full_text", 'paper_id', 'length'])
+    df_txts = sqlContext.createDataFrame(temp, ["full_text", 'paper_id', 'length']).cache()
     df_txts.show()
 
     ############################
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     ############################
 
     # create the document frequencies in the form of a count vectorizer
-    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=2.0, vocabSize=10000)
+    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=.02, maxDF=.98, vocabSize=10000)
     cvmodel = cv.fit(df_txts)
     result_cv = cvmodel.transform(df_txts)
     cvmodel.save("count")
@@ -157,8 +157,10 @@ if __name__ == "__main__":
     idf = IDF(inputCol="raw_features", outputCol="features")
     idfModel = idf.fit(result_cv)
     idfModel.save("tfidf")
-    result_tfidf = idfModel.transform(result_cv)
+    result_tfidf = idfModel.transform(result_cv).cache()
     result_tfidf.show()
+    print("--- %s seconds ---" % (time.time() - start_time))
+
 
     ######################
     ### LDA CLUSTERING ###
