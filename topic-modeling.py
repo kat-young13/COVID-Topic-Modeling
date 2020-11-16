@@ -1,15 +1,17 @@
+import sys
+
 from nltk import SnowballStemmer
 from pyspark.sql import SQLContext, SparkSession
 from pyspark import SparkConf, SparkContext
 from pyspark.sql.functions import concat_ws
 import re as re
-from pyspark.ml.feature import CountVectorizer, IDF
+from pyspark.ml.feature import CountVectorizer, IDF, CountVectorizerModel
 from pyspark.ml.clustering import LDA
 import time
 import numpy as np
 import json
 from pyspark.ml.linalg import DenseVector
-
+from pyspark.sql import functions as F
 
 def normalizeWords(text):
     ''' Text preprocessing '''
@@ -28,7 +30,7 @@ def normalizeWords(text):
                   'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
                   'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now', 'html']
     test = [stemmer.stem(word) for word in test if not word in stop_words and word.isalpha() and len(word) > 2]
-    return (test, text[1], len(test))
+    return test, text[1], len(test)
 
 
 def getTopic(line):
@@ -58,13 +60,16 @@ def addVectors(x, y):
 def export_for_pyLDAvis(filename, model, transformed, df_txts, vocab, term_frequency):
     ''' Export for visualization purposes -- pyLDAvis '''
     # topic_term_dists
+    print("exporting")
     topic_term_dists = np.array(model.topicsMatrix().toArray()).T
     # doc_topic_dists
+    print("done converting to array")
     doc_topic_dists = np.array(
         [x.toArray() for x in transformed.select(["topicDistribution"]).toPandas()['topicDistribution']])
+    print("done converting to pandas")
     # doc_lengths
     doc_lengths = [r[0] for r in df_txts.select("length").collect()]
-
+    print("filling json")
     pyLDA = {}
     pyLDA.update({"topic_term_dists": topic_term_dists.tolist()})
     pyLDA.update({"doc_topic_dists": doc_topic_dists.tolist()})
@@ -91,12 +96,12 @@ if __name__ == "__main__":
     ##############################
 
     # read in a sample file to infer schema
-    new_df = sqlContext.read.json("test/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json",
+    new_df = sqlContext.read.json("tempy/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json",
                                   multiLine=True)
     schema = new_df.schema
 
     # read in whole JSON set with correct schema (saves a ton of time)
-    new_df = sqlContext.read.schema(schema).json("test/pdf_json/*", multiLine=True)
+    new_df = sqlContext.read.schema(schema).json("tempy/pdf_json/0a9c92624fa4e3cfa24493d242d9dbd2192c5a88.json", multiLine=True)
     print("time to read first set of json set")
     print("--- %s seconds ---" % (time.time() - start_time))
 
@@ -108,11 +113,11 @@ if __name__ == "__main__":
     ##############################
 
     # read in sample file to infer schema
-    new_df1 = sqlContext.read.json("test/pmc_json/PMC59549.xml.json", multiLine=True)
+    new_df1 = sqlContext.read.json("tempy/pmc_json/PMC59549.xml.json", multiLine=True)
     schema1 = new_df1.schema
 
     # read in whole PMC set with correct scheme
-    new_dfs1 = sqlContext.read.schema(schema1).json("test/pmc_json/*", multiLine=True)
+    new_dfs1 = sqlContext.read.schema(schema1).json("tempy/pmc_json/PMC59549.xml.json", multiLine=True)
     print("time to read second set of json set")
     print("--- %s seconds ---" % (time.time() - start_time))
     test2 = new_dfs1.selectExpr("paper_id", "body_text.text as body", "metadata.title")
@@ -145,10 +150,12 @@ if __name__ == "__main__":
     ############################
 
     # create the document frequencies in the form of a count vectorizer
-    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", minDF=.02, maxDF=.98, vocabSize=10000)
+    cv = CountVectorizer(inputCol="full_text", outputCol="raw_features", vocabSize=10000)
+    # cvmodel = CountVectorizerModel.load("count")
+
     cvmodel = cv.fit(df_txts)
     result_cv = cvmodel.transform(df_txts)
-    cvmodel.save("count")
+    #     cvmodel.save("count")
     ############################
     ### TF-IDF VECTORIZATION ###
     ############################
@@ -156,21 +163,17 @@ if __name__ == "__main__":
     # create the tfidf vectorization using the df computed above
     idf = IDF(inputCol="raw_features", outputCol="features")
     idfModel = idf.fit(result_cv)
-    idfModel.save("tfidf")
     result_tfidf = idfModel.transform(result_cv).cache()
     result_tfidf.show()
     print("--- %s seconds ---" % (time.time() - start_time))
 
-
     ######################
     ### LDA CLUSTERING ###
     ######################
-
-    # manual grid search for best num topics for our model
-    grid_num_topics = [11, 13, 15]
-    like_perp = []
+    grid_num_topics = [15]
     model = None
     for i in grid_num_topics:
+
         num_topics = i  # tune number of topics
         max_iterations = 100
         lda = LDA(k=num_topics, maxIter=max_iterations)
@@ -181,14 +184,8 @@ if __name__ == "__main__":
         likelihood = model.logLikelihood(result_tfidf)
         perplexity = model.logPerplexity(result_tfidf)
 
-        like_perp.append((likelihood, perplexity))
-        # print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
-        # print("The upper bound on perplexity: " + str(perplexity))
-
-    lp_cols = ["dept_name", "dept_id"]
-    lp_df = spark.createDataFrame(data=like_perp, schema=lp_cols)
-    lp_df.show()
-    # topic_tuning_results = spark.createDataFrame([(likelihood, perplexity)], ("likelihood", "perplexity"))
+        print("The lower bound on the log likelihood of the entire corpus: " + str(likelihood))
+        print("The upper bound on perplexity: " + str(perplexity))
 
     # transform our data and get corresponding topic
     transformed = model.transform(result_tfidf)
@@ -200,7 +197,7 @@ if __name__ == "__main__":
     docs_with_topics.show()
 
     # get the top words from topics
-    wordNumbers = 5
+    wordNumbers = 10
     topicIndices = model.describeTopics(wordNumbers)
 
     vocabArray = cvmodel.vocabulary  # get vocabulary
@@ -215,10 +212,9 @@ if __name__ == "__main__":
     ################################
 
     # get each word's total frequency across documents
-    rf_rdd = result_cv.rdd.map(lambda x: (x['raw_features'])) \
-        .map(lambda x: (1, DenseVector(x))) \
-        .reduceByKey(addVectors)
-    frequencies = rf_rdd.collect()[0][1]
+    wf_df = result_cv.withColumn('word', F.explode(F.col('full_text'))).groupBy('word').count().sort('count', ascending=False)
+    wf_df.show()
+    frequencies = list(wf_df.select('count').toPandas()['count'])
 
     # export all info for pyLDAvis
     export_for_pyLDAvis("topic-info.json", model, transformed, df_txts, vocabArray, frequencies)
@@ -234,6 +230,5 @@ if __name__ == "__main__":
     # output topics assigned to each paper, and x most common words in topic
     paper_topics.coalesce(1).write.options(header='true').csv('out/paper_topics')
     topic_info.coalesce(1).write.options(header='true').csv('out/topic_info')
-    lp_df.coalesce(1).write.options(header='true').csv('out/perplexity_likelihood')
 
     print("--- %s seconds ---" % (time.time() - start_time))
